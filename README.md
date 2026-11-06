@@ -45,7 +45,7 @@ The `vote` web app is then available on port 31000 on each host of the cluster, 
 To remove them, run:
 
 ```shell
-kubectl delete -f k8s-specifications/
+kubectl delete -f k8s-specifications/,
 ```
 
 ## Architecture
