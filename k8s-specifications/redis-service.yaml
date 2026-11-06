@@ -13,3 +13,4 @@ spec:
   selector:
     app: redis
   
+#redis-service.yaml

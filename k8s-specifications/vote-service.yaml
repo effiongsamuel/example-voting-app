@@ -14,3 +14,4 @@ spec:
   selector:
     app: vote
   
+#vote-service.yaml

@@ -13,3 +13,4 @@ spec:
   selector:
     app: db
   
+#db-service.yaml

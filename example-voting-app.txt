@@ -1,0 +1,135 @@
+EXAMPLE VOTING APP - HOW IT WORKS
+=================================
+
+OVERVIEW
+--------
+The app lets people vote between two options (Cats or Dogs) and shows the
+live results. It is made of five containers, each with one job:
+
+  vote    (Python / Flask)   - the page where people cast a vote
+  redis   (Redis)            - a queue that holds votes temporarily
+  worker  (.NET)             - moves votes from Redis into the database
+  db      (PostgreSQL)       - stores votes permanently
+  result  (Node.js)          - the page that shows live totals
+
+Flow of one vote:
+
+  Browser --> vote --> redis --> worker --> db --> result --> Browser
+
+Docker Compose puts all containers on shared networks, so they find each
+other by service name (for example "redis" and "db") using Docker's
+built-in DNS.
+
+
+1. VOTE (Python / Flask) - port 8080 on the host
+------------------------------------------------
+Job: collect votes from users. It does nothing else.
+
+What the code does:
+  - Reads the two option names from environment variables (OPTION_A and
+    OPTION_B). They default to "Cats" and "Dogs".
+  - Gives each browser a unique voter_id and stores it in a cookie. If the
+    cookie does not exist yet, it generates a random one.
+  - On a POST (the user clicked a button), it reads the chosen option,
+    builds a small JSON message like:
+        {"voter_id": "3f9a...", "vote": "a"}
+    and pushes it onto a Redis list called "votes" with redis.rpush().
+  - It then renders index.html, so the user sees that their vote was
+    received.
+
+Important points:
+  - vote never talks to the database. It only does a fast push to Redis,
+    so it responds instantly even if the database is slow or busy.
+  - The voter_id cookie is what makes "one person = one vote" possible
+    later.
+
+
+2. WORKER (.NET) - no web page, no port
+---------------------------------------
+Job: the middleman between Redis and Postgres. It takes votes out of the
+Redis queue and saves them permanently in the database. It runs a loop
+forever.
+
+Following one vote:
+  1. You click "Cats" on the vote page.
+  2. vote pushes the JSON message onto the Redis list "votes".
+  3. The worker, every 100 ms, calls ListLeftPopAsync("votes"), which
+     removes the oldest vote from the queue.
+  4. If it got a vote, it reads the JSON and calls UpdateVote.
+  5. The vote is saved in the "votes" table in Postgres.
+
+What the code does:
+  - Startup: OpenDbConnection retries every second until Postgres is
+    reachable ("Waiting for db"), then creates the votes table if it does
+    not exist (columns: id UNIQUE, vote). OpenRedisConnection does the
+    same for Redis. So the worker survives starting before its
+    dependencies are ready.
+  - GetIp converts the hostname "redis" to an IP address. This is a
+    workaround for a known StackExchange.Redis issue.
+  - Main loop: sleeps 100 ms to avoid a CPU spike, reconnects to Redis if
+    the connection dropped, then pops one vote if any is waiting.
+  - Keep-alive: when the queue is empty it runs "SELECT 1" so the idle
+    Postgres connection is not dropped.
+  - UpdateVote: first tries INSERT. Because the id column is UNIQUE, a
+    voter who already voted causes a DbException. The catch block then
+    runs UPDATE votes SET vote = ... WHERE id = ... instead.
+    Result: one person = one vote, and changing your mind overwrites the
+    old vote.
+
+Why have a worker at all (instead of vote writing to Postgres directly)?
+  - Speed: the web app only does a quick Redis push and never waits for
+    slow database writes.
+  - Traffic spikes: if 10,000 people vote at once, the queue absorbs the
+    burst and the worker drains it at a steady pace.
+  - Resilience: if Postgres goes down briefly, votes wait safely in Redis
+    instead of being lost or showing users an error.
+  - Independent scaling: if votes pile up, run more worker containers
+    without touching vote or result.
+  - Separation of concerns: vote only collects, worker only processes,
+    result only displays. Each can use a different language.
+
+This "web app -> queue -> background worker -> database" pattern is very
+common in real systems (order processing, sending emails, resizing
+images, and so on).
+
+
+3. RESULT (Node.js / Express + socket.io) - port 8081 on the host
+-----------------------------------------------------------------
+Job: display the live vote totals. It only reads from the database.
+
+What the code does:
+  - Starts an Express web server and attaches socket.io to it for live
+    updates. When a browser connects, it sends a "Welcome!" message and
+    lets the browser subscribe to a channel.
+  - Connects to Postgres using the connection string
+    postgres://postgres:postgres@db/postgres. It retries up to 1000 times,
+    once per second, until the database is ready ("Waiting for db").
+  - getVotes runs this query every second:
+        SELECT vote, COUNT(id) AS count FROM votes GROUP BY vote
+    collectVotesFromResult turns the rows into {a: <count>, b: <count>}.
+  - It then pushes the totals to every connected browser with
+    io.sockets.emit("scores", ...). The page updates live, with no
+    refresh needed.
+  - Static files (HTML, CSS, JS) are served from the views folder.
+
+Important points:
+  - result never talks to Redis or the worker. It only reads what the
+    worker has already saved in Postgres.
+  - There can be a short delay (about a second) between voting and seeing
+    the number change, because result polls the database once per second.
+
+Small quirk in the code: the "/" route uses path.resolve(...) but "path"
+is never required. It does not break anything in practice, because
+express.static serves index.html before that route is reached.
+
+
+PORTS AND NETWORKS (docker-compose.yml)
+---------------------------------------
+  vote    -> http://localhost:8080  (front-tier + back-tier)
+  result  -> http://localhost:8081  (front-tier + back-tier)
+  worker  -> no ports               (back-tier only)
+  redis   -> no ports               (back-tier only)
+  db      -> no ports               (back-tier only)
+
+front-tier is the network that faces users; back-tier is the internal
+network for the services that should not be reachable from outside.
