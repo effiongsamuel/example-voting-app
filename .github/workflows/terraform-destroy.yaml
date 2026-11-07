@@ -10,9 +10,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: terraform-voting-app
+  cancel-in-progress: false
+
 env:
   AWS_REGION: eu-north-1
   TF_VERSION: "1.11.4"
+  TF_STATE_KEY: voting-app/dev.tfstate
 
 # every `run:` step starts inside terraform/
 defaults:
@@ -23,11 +28,14 @@ jobs:
   terraform:
     name: Terraform destroy
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Confirm
+        env:
+          CONFIRM: ${{ inputs.confirm }}
         run: |
-          [ "${{ inputs.confirm }}" = "destroy" ] || { echo "::error::type exactly: destroy"; exit 1; }
+          [ "$CONFIRM" = "destroy" ] || { echo "::error::type exactly: destroy"; exit 1; }
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -54,7 +62,7 @@ jobs:
               echo "::error::backend.tf has no bucket and the repo variable TF_STATE_BUCKET is empty"
               exit 1
             fi
-            ARGS=(-backend-config="key=ts-academy/dev.tfstate" -backend-config="region=${{ env.AWS_REGION }}" -backend-config="use_lockfile=true")
+            ARGS=(-backend-config="key=$TF_STATE_KEY" -backend-config="region=$AWS_REGION" -backend-config="use_lockfile=true")
             [ -n "$TF_STATE_BUCKET" ] && ARGS+=(-backend-config="bucket=$TF_STATE_BUCKET")
             terraform init -input=false "${ARGS[@]}"
           else
