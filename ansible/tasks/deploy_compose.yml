@@ -1,0 +1,45 @@
+---
+# Deploys vote, result, worker, redis and db with Docker Compose.
+- name: Compose | create the app folder
+  ansible.builtin.file:
+    path: /opt/voting-app
+    state: directory
+    mode: "0755"
+
+- name: Compose | write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: /opt/voting-app/docker-compose.yml
+    mode: "0644"
+
+- name: Compose | start the stack (pulls newer images, recreates only what changed)
+  ansible.builtin.command: docker compose -f /opt/voting-app/docker-compose.yml up -d --remove-orphans --pull always
+  register: compose_up
+  changed_when: "'Started' in compose_up.stderr or 'Recreated' in compose_up.stderr or 'Created' in compose_up.stderr"
+
+- name: Compose | wait for the vote page
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ vote_port }}/"
+    status_code: 200
+  register: vote_up
+  until: vote_up.status == 200
+  retries: 30
+  delay: 10
+
+- name: Compose | wait for the result page
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ result_port }}/"
+    status_code: 200
+  register: result_up
+  until: result_up.status == 200
+  retries: 30
+  delay: 10
+
+- name: Compose | show the containers
+  ansible.builtin.command: docker compose -f /opt/voting-app/docker-compose.yml ps
+  register: compose_ps
+  changed_when: false
+
+- name: Compose | result
+  ansible.builtin.debug:
+    var: compose_ps.stdout_lines
