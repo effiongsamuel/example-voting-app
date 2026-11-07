@@ -1,0 +1,251 @@
+---
+# Run automatically by Terraform (terraform/ansible.tf), or by hand from this folder:
+#   ansible-playbook playbook.yml -e @vars.generated.yml
+# Safe to re-run: unchanged code means no rebuild and no restart.
+
+# 1. Package the app sources on your machine; the tag is a hash of the code ----
+- name: Package frontend and backend sources
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Create reproducible archives and compute their hash
+      ansible.builtin.shell: |
+        set -eo pipefail
+        tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+            --exclude=node_modules --exclude=.next --exclude=target --exclude=.git \
+            -cf - -C "{{ playbook_dir }}/../{{ item }}" . | gzip -n > "/tmp/tsapp-{{ item }}.tgz"
+        sha1sum "/tmp/tsapp-{{ item }}.tgz" | cut -c1-12
+      args:
+        executable: /bin/bash
+      loop: [frontend, backend]
+      register: archives
+      changed_when: false
+
+    - name: Remember the image tags
+      ansible.builtin.set_fact:
+        frontend_tag: "{{ archives.results[0].stdout }}"
+        backend_tag: "{{ archives.results[1].stdout }}"
+
+# 2. Wait until both servers are up, then install Docker --------------------------
+- name: Wait for the servers and install Docker
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait until SSH works (new servers need a minute or two)
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 900
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    - name: Wait for first-boot cloud-init to finish
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+      failed_when: false
+
+    - name: Install Docker and tools
+      ansible.builtin.apt:
+        name: [docker.io, curl, ca-certificates, tar, gzip]
+        update_cache: true
+        lock_timeout: 300
+
+    - name: Start Docker
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+# 3. Kubernetes (k3s): server on the frontend, agent on the backend ----------------
+- name: Install the k3s server (frontend)
+  hosts: frontend
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Download the k3s installer
+      ansible.builtin.get_url:
+        url: https://get.k3s.io
+        dest: /usr/local/bin/k3s-install.sh
+        mode: "0755"
+
+    - name: Install k3s server
+      ansible.builtin.command: /usr/local/bin/k3s-install.sh
+      args:
+        creates: /usr/local/bin/k3s
+      environment:
+        K3S_TOKEN: "{{ k3s_token }}"
+        INSTALL_K3S_EXEC: "server --tls-san {{ frontend_public_ip }} --node-label role=frontend --write-kubeconfig-mode 644"
+
+    - name: Wait for the Kubernetes API
+      ansible.builtin.command: k3s kubectl get nodes
+      register: api
+      until: api.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+
+- name: Install the k3s agent (backend)
+  hosts: backend
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Download the k3s installer
+      ansible.builtin.get_url:
+        url: https://get.k3s.io
+        dest: /usr/local/bin/k3s-install.sh
+        mode: "0755"
+
+    - name: Check that the backend can reach the k3s API on the frontend (port 6443)
+      ansible.builtin.wait_for:
+        host: "{{ frontend_private_ip }}"
+        port: 6443
+        timeout: 120
+
+    - name: Join the cluster
+      block:
+        - name: Install the k3s agent (files only, do not start yet)
+          ansible.builtin.command: /usr/local/bin/k3s-install.sh
+          args:
+            creates: /etc/systemd/system/k3s-agent.service
+          environment:
+            K3S_URL: "https://{{ frontend_private_ip }}:6443"
+            K3S_TOKEN: "{{ k3s_token }}"
+            INSTALL_K3S_EXEC: "agent --node-label role=backend"
+            INSTALL_K3S_SKIP_START: "true"
+
+        # The service waits until it has joined the cluster, so start it without blocking
+        - name: Start the agent
+          ansible.builtin.command: systemctl enable --now --no-block k3s-agent
+          changed_when: false
+
+        - name: Wait until the agent is active (max 6 minutes)
+          ansible.builtin.command: systemctl is-active k3s-agent
+          register: agent_state
+          until: agent_state.stdout == "active"
+          retries: 36
+          delay: 10
+          failed_when: false
+          changed_when: false
+
+        - name: Stop here if the agent did not join
+          ansible.builtin.assert:
+            that: agent_state.stdout == "active"
+            fail_msg: "k3s-agent is '{{ agent_state.stdout }}', not active"
+
+      rescue:
+        - name: Collect the agent logs
+          ansible.builtin.command: journalctl -u k3s-agent --no-pager -n 60
+          register: agent_logs
+          changed_when: false
+          failed_when: false
+
+        - name: Show the agent logs
+          ansible.builtin.debug:
+            var: agent_logs.stdout_lines
+
+        - name: Fail with a clear message
+          ansible.builtin.fail:
+            msg: "The k3s agent on the backend could not join the cluster. See the logs above."
+
+# 4. Build the Docker images on the node that will run them ------------------------
+- name: Build the frontend (Next.js) image
+  hosts: frontend
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Build and load the image into k3s
+      ansible.builtin.include_tasks: tasks/build_image.yml
+      vars:
+        src_dir: frontend
+        image_name: tsapp-frontend
+        image_tag: "{{ hostvars['localhost'].frontend_tag }}"
+
+- name: Build the backend (Java) image
+  hosts: backend
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Build and load the image into k3s
+      ansible.builtin.include_tasks: tasks/build_image.yml
+      vars:
+        src_dir: backend
+        image_name: tsapp-backend
+        image_tag: "{{ hostvars['localhost'].backend_tag }}"
+
+# 5. Deploy to Kubernetes and verify -----------------------------------------------
+- name: Deploy the app
+  hosts: frontend
+  become: true
+  gather_facts: false
+  vars:
+    frontend_tag: "{{ hostvars['localhost'].frontend_tag }}"
+    backend_tag: "{{ hostvars['localhost'].backend_tag }}"
+  tasks:
+    - name: Wait until both nodes are Ready
+      ansible.builtin.shell: k3s kubectl get nodes --no-headers | grep -c ' Ready'
+      register: nodes_ready
+      until: (nodes_ready.stdout | int) >= 2
+      retries: 60
+      delay: 5
+      failed_when: false
+      changed_when: false
+
+    - name: Create the manifest folder
+      ansible.builtin.file:
+        path: /opt/tsapp/k8s
+        state: directory
+        mode: "0700"
+
+    - name: Write the database secret
+      ansible.builtin.template:
+        src: 10-db-secret.yaml.j2
+        dest: /opt/tsapp/k8s/10-db-secret.yaml
+        mode: "0600"
+      no_log: true
+
+    - name: Write the other manifests
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/opt/tsapp/k8s/{{ item }}"
+        mode: "0600"
+      loop:
+        - 00-namespace.yaml
+        - 20-backend.yaml
+        - 30-frontend.yaml
+        - 40-ingress.yaml
+
+    - name: Apply the manifests
+      ansible.builtin.command: k3s kubectl apply -f /opt/tsapp/k8s/
+      register: apply
+      changed_when: "'created' in apply.stdout or 'configured' in apply.stdout"
+
+    - name: Wait for the backend rollout
+      ansible.builtin.command: k3s kubectl -n tsapp rollout status deployment/backend --timeout=300s
+      changed_when: false
+
+    - name: Wait for the frontend rollout
+      ansible.builtin.command: k3s kubectl -n tsapp rollout status deployment/frontend --timeout=180s
+      changed_when: false
+
+    - name: Test the whole chain (ingress, Next.js, Java, MySQL)
+      ansible.builtin.uri:
+        url: "http://{{ frontend_private_ip }}/api/health"
+        return_content: true
+      register: health
+      until: health.status == 200
+      retries: 30
+      delay: 10
+
+    - name: Show the pods
+      ansible.builtin.command: k3s kubectl -n tsapp get pods -o wide
+      register: pods
+      changed_when: false
+
+    - name: Result
+      ansible.builtin.debug:
+        msg:
+          - "App is live: http://{{ frontend_public_ip }}"
+          - "Health check says: {{ health.content }}"
+          - "{{ pods.stdout_lines }}"

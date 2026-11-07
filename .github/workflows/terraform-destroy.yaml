@@ -1,0 +1,66 @@
+name: Destroy Infrastructure with terraform
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "destroy" to delete ALL the AWS resources'
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: eu-north-1
+  TF_VERSION: "1.11.4"
+
+# every `run:` step starts inside terraform/
+defaults:
+  run:
+    working-directory: terraform
+
+jobs:
+  terraform:
+    name: Terraform destroy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Confirm
+        run: |
+          [ "${{ inputs.confirm }}" = "destroy" ] || { echo "::error::type exactly: destroy"; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # Must use the SAME state as the deploy workflow, otherwise there is nothing to destroy.
+      - name: Terraform Init
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          if [ -f backend.tf ]; then
+            if [ -z "$TF_STATE_BUCKET" ] && ! grep -q 'bucket' backend.tf; then
+              echo "::error::backend.tf has no bucket and the repo variable TF_STATE_BUCKET is empty"
+              exit 1
+            fi
+            ARGS=(-backend-config="key=ts-academy/dev.tfstate" -backend-config="region=${{ env.AWS_REGION }}" -backend-config="use_lockfile=true")
+            [ -n "$TF_STATE_BUCKET" ] && ARGS+=(-backend-config="bucket=$TF_STATE_BUCKET")
+            terraform init -input=false "${ARGS[@]}"
+          else
+            echo "::error::no backend.tf - the state from the deploy run is gone, nothing to destroy"
+            exit 1
+          fi
+
+      - name: Terraform destroy
+        run: terraform destroy -input=false -auto-approve

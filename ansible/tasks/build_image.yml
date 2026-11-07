@@ -1,0 +1,37 @@
+---
+# Builds <image_name>:<image_tag> from /tmp/tsapp-<src_dir>.tgz (made on the controller)
+# and loads it into k3s's containerd. Skipped if that exact tag is already there.
+- name: "{{ image_name }} | already loaded in k3s?"
+  ansible.builtin.shell: "k3s ctr -n k8s.io images ls -q | grep -F '{{ image_name }}:{{ image_tag }}'"
+  register: present
+  failed_when: false
+  changed_when: false
+
+- name: "{{ image_name }} | build and load"
+  when: present.rc != 0
+  block:
+    - name: Reset the source folder
+      ansible.builtin.file:
+        path: "/opt/tsapp/{{ src_dir }}"
+        state: absent
+
+    - name: Create the source folder
+      ansible.builtin.file:
+        path: "/opt/tsapp/{{ src_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Upload and unpack the source
+      ansible.builtin.unarchive:
+        src: "/tmp/tsapp-{{ src_dir }}.tgz"
+        dest: "/opt/tsapp/{{ src_dir }}"
+
+    - name: Docker build
+      ansible.builtin.command: "docker build -t {{ image_name }}:{{ image_tag }} /opt/tsapp/{{ src_dir }}"
+
+    - name: Load the image into k3s
+      ansible.builtin.shell: |
+        set -e
+        docker save -o /tmp/{{ image_name }}.tar {{ image_name }}:{{ image_tag }}
+        k3s ctr -n k8s.io images import /tmp/{{ image_name }}.tar
+        rm -f /tmp/{{ image_name }}.tar
