@@ -37,4 +37,4 @@ run_ansible = true
 # Compute
 ami_name_filter  = "ubuntu/images/hvm-ssd-gp3/ubuntu-resolute-26.04-amd64-server-*"
 instance_type    = "m7i-flex.large"
-root_volume_size = 20
+root_volume_size = 100

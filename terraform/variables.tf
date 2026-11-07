@@ -135,7 +135,7 @@ variable "instance_type" {
 variable "root_volume_size" {
   description = "Root EBS volume size (GiB). Holds Docker images, k3s and the Postgres data."
   type        = number
-  default     = 20
+  default     = 100
 }
 
 # ---------------------------------------------------------------------------
