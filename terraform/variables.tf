@@ -123,7 +123,8 @@ variable "run_ansible" {
 variable "ami_name_filter" {
   description = "Name filter for the Canonical Ubuntu AMI."
   type        = string
-  default     = "ubuntu/images/hvm-ssd-gp3/ubuntu-resolute-26.04-amd64-server-*"
+  # default     = "ubuntu/images/hvm-ssd-gp3/ubuntu-resolute-26.04-amd64-server-*"
+  default = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
 }
 
 variable "instance_type" {
