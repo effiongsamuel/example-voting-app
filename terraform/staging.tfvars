@@ -21,6 +21,7 @@ k3s_result_nodeport = 31001
 
 run_ansible = true
 
-ami_name_filter  = "ubuntu/images/hvm-ssd-gp3/ubuntu-resolute-26.04-amd64-server-*"
+# ami_name_filter  = "ubuntu/images/hvm-ssd-gp3/ubuntu-resolute-26.04-amd64-server-*"
+ami_name_filter = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*" # cose postgres to fail to start
 instance_type    = "m7i-flex.large"
 root_volume_size = 20

@@ -35,6 +35,7 @@ worker_image = "dockersamples/examplevotingapp_worker"
 run_ansible = true
 
 # Compute
-ami_name_filter  = "ubuntu/images/hvm-ssd-gp3/ubuntu-resolute-26.04-amd64-server-*"
+# ami_name_filter  = "ubuntu/images/hvm-ssd-gp3/ubuntu-resolute-26.04-amd64-server-*" # old version cause postgres to fail to start 
+ami_name_filter = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
 instance_type    = "m7i-flex.large"
 root_volume_size = 100
