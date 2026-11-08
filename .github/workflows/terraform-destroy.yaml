@@ -32,6 +32,7 @@ jobs:
 
     steps:
       - name: Confirm
+        working-directory: .
         env:
           CONFIRM: ${{ inputs.confirm }}
         run: |
