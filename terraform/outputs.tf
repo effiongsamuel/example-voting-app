@@ -57,3 +57,8 @@ output "ami_name" {
   description = "Name of the resolved AMI."
   value       = data.aws_ami.ubuntu.name
 }
+
+output "deploy_method" {
+  description = "Deployment method Terraform actually used."
+  value       = var.deploy_method
+}

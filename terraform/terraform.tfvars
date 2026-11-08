@@ -20,7 +20,7 @@ availability_zone = "eu-north-1a"
 app_allowed_cidrs = ["0.0.0.0/0"]
 
 # How the app is deployed: "compose", "k3s" or "both"
-deploy_method       = "compose"
+deploy_method       = "both"
 vote_port           = 8080
 result_port         = 8081
 k3s_vote_nodeport   = 31000
