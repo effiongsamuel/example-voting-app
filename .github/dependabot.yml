@@ -1,17 +1,72 @@
+# Calm Dependabot: one grouped pull request per ecosystem per month, at most one open at a time,
+# and no major-version jumps (those can break the app and must be done by hand).
 version: 2
 updates:
-  # Maintain dependencies for GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"
-  # Pinned base images, packages and providers # just added to maintain the dependencies for the docker images, python packages, npm packages, nuget packages and terraform providers or stop above last line
-  - { package-ecosystem: docker, directory: "/vote", schedule: { interval: weekly } }
-  - { package-ecosystem: docker, directory: "/result", schedule: { interval: weekly } }
-  - { package-ecosystem: docker, directory: "/worker", schedule: { interval: weekly } }
-  - { package-ecosystem: docker, directory: "/seed-data", schedule: { interval: weekly } }
-  - { package-ecosystem: pip, directory: "/vote", schedule: { interval: weekly } }
-  - { package-ecosystem: npm, directory: "/result", schedule: { interval: weekly } }
-  - { package-ecosystem: nuget, directory: "/worker", schedule: { interval: weekly } }
-  - { package-ecosystem: terraform, directory: "/terraform", schedule: { interval: weekly } }
+    open-pull-requests-limit: 1
+    groups:
+      actions:
+        patterns: ["*"]
 
+  - package-ecosystem: "docker"
+    directories: ["/vote", "/result", "/worker", "/seed-data"]
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 1
+    groups:
+      base-images:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "pip"
+    directory: "/vote"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 1
+    groups:
+      python:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "npm"
+    directory: "/result"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 1
+    groups:
+      node:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "nuget"
+    directory: "/worker"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 1
+    groups:
+      dotnet:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "terraform"
+    directory: "/terraform"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 1
+    groups:
+      terraform:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
