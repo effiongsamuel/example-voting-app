@@ -16,7 +16,8 @@ namespace Worker
         {
             try
             {
-                var pgsql = OpenDbConnection("Server=db;Username=postgres;Password=postgres;");
+                // var pgsql = OpenDbConnection("Server=db;Username=postgres;Password=postgres;");
+                var pgsql = OpenDbConnection(DbConnectionString());
                 var redisConn = OpenRedisConnection("redis");
                 var redis = redisConn.GetDatabase();
 
@@ -46,7 +47,8 @@ namespace Worker
                         if (!pgsql.State.Equals(System.Data.ConnectionState.Open))
                         {
                             Console.WriteLine("Reconnecting DB");
-                            pgsql = OpenDbConnection("Server=db;Username=postgres;Password=postgres;");
+                            // pgsql = OpenDbConnection("Server=db;Username=postgres;Password=postgres;");
+                            pgsql = OpenDbConnection(DbConnectionString());
                         }
                         else
                         { // Normal +1 vote requested
@@ -66,6 +68,18 @@ namespace Worker
             }
         }
 
+         // The password comes from the environment (a Kubernetes Secret or a .env file), never from the source code.
+        private static string DbConnectionString()
+        {
+            var host = Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? "db";
+            var user = Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "postgres";
+            var password = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD");
+            if (string.IsNullOrEmpty(password))
+            {
+                throw new InvalidOperationException("POSTGRES_PASSWORD is not set");
+            }
+            return $"Server={host};Username={user};Password={password};";
+        }
         private static NpgsqlConnection OpenDbConnection(string connectionString)
         {
             NpgsqlConnection connection;
