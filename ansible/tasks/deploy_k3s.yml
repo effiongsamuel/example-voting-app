@@ -1,5 +1,7 @@
 ---
-# Installs single-node k3s and applies the manifests from k8s-specifications/.
+# Installs single-node k3s and Helm, creates the database Secret, then installs the
+# chart in helm/voting-app/ as the Helm release "voting". Upgrades and rollbacks are
+# Helm operations: helm history voting / helm rollback voting.
 - name: k3s | download the installer
   ansible.builtin.get_url:
     url: https://get.k3s.io
@@ -22,27 +24,86 @@
   failed_when: false
   changed_when: false
 
-- name: k3s | create the manifest folder
+- name: Helm | download the pinned release with its checksum
+  ansible.builtin.get_url:
+    url: https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz
+    checksum: sha256:https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz.sha256sum
+    dest: /tmp/helm.tgz
+    mode: "0644"
+
+- name: Helm | install the binary
+  ansible.builtin.shell: |
+    set -e
+    tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm
+    install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+  args:
+    creates: /usr/local/bin/helm
+
+- name: Helm | create the app folder
   ansible.builtin.file:
     path: /opt/voting-app
     state: directory
     mode: "0755"
 
-- name: k3s | copy k8s-specifications to the server
-  ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../k8s-specifications/"
-    dest: /opt/voting-app/k8s-specifications/
-    mode: "0644"
-
-- name: k3s | apply the manifests
-  ansible.builtin.command: k3s kubectl apply -f /opt/voting-app/k8s-specifications/
-  register: k8s_apply
-  changed_when: "'created' in k8s_apply.stdout or 'configured' in k8s_apply.stdout"
-
-- name: k3s | wait for every deployment to roll out
-  ansible.builtin.command: "k3s kubectl rollout status deployment/{{ item }} --timeout=300s"
-  loop: [db, redis, vote, result, worker]
+- name: Helm | is the release already installed?
+  ansible.builtin.command: helm status voting
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: helm_status
+  failed_when: false
   changed_when: false
+
+- name: Helm | were the old raw manifests applied before?
+  ansible.builtin.stat:
+    path: /opt/voting-app/k8s-specifications
+  register: old_manifests
+
+- name: Helm | remove resources of the old raw manifests (only before the first Helm install)
+  ansible.builtin.shell: k3s kubectl delete -f /opt/voting-app/k8s-specifications/ --ignore-not-found
+  when: helm_status.rc != 0 and old_manifests.stat.exists
+  changed_when: true
+
+- name: Helm | create or update the database Secret (the value comes from Terraform, never from Git)
+  ansible.builtin.shell: |
+    set -o pipefail
+    k3s kubectl create secret generic voting-db \
+      --from-literal=POSTGRES_PASSWORD="$DB_PASSWORD" \
+      --dry-run=client -o yaml | k3s kubectl apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    DB_PASSWORD: "{{ db_password }}"
+  no_log: true
+  changed_when: true
+
+- name: Helm | replace the chart on the server
+  ansible.builtin.file:
+    path: /opt/voting-app/helm
+    state: absent
+
+- name: Helm | copy the chart
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../helm/voting-app/"
+    dest: /opt/voting-app/helm/voting-app/
+    mode: "0644"
+    directory_mode: "0755"
+
+# --atomic: if the upgrade does not become healthy, Helm rolls back to the last good revision by itself.
+# The image tag is only set on the first install: later versions are deployed by ci-cd.yml (commit SHA)
+# and a re-run of this playbook must not move the release back to "latest".
+- name: Helm | install or upgrade the release
+  ansible.builtin.command: >-
+    helm upgrade --install voting /opt/voting-app/helm/voting-app
+    --reset-then-reuse-values
+    --set image.registry={{ image_registry }}
+    {% if helm_status.rc != 0 %}--set image.tag={{ image_tag }}{% endif %}
+    --set vote.service.nodePort={{ k3s_vote_nodeport }}
+    --set result.service.nodePort={{ k3s_result_nodeport }}
+    --atomic --wait --timeout 8m --history-max 10
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: helm_upgrade
+  changed_when: true
 
 - name: k3s | wait for the vote page (NodePort)
   ansible.builtin.uri:
@@ -62,11 +123,21 @@
   retries: 30
   delay: 10
 
-- name: k3s | show the pods
-  ansible.builtin.command: k3s kubectl get pods -o wide
-  register: k8s_pods
+- name: Helm | run the chart's own test (vote and result answer inside the cluster)
+  ansible.builtin.command: helm test voting --timeout 3m
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: helm_test
+  failed_when: false
   changed_when: false
 
-- name: k3s | result
+- name: Helm | release history and test result
+  ansible.builtin.shell: helm history voting && k3s kubectl get pods -o wide
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: helm_overview
+  changed_when: false
+
+- name: Helm | result
   ansible.builtin.debug:
-    var: k8s_pods.stdout_lines
+    msg: "{{ ['helm test exit code: ' ~ helm_test.rc] + helm_overview.stdout_lines }}"

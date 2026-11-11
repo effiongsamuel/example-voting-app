@@ -1,0 +1,74 @@
+---
+# Run automatically by Terraform (terraform/ansible.tf), or by hand from this folder:
+#   ansible-playbook playbook.yml -e @vars.generated.yml
+# Safe to re-run. deploy_method (from Terraform) is compose, k3s or both.
+
+# 1. Wait for the server and install Docker ------------------------------------
+- name: Prepare the server
+  hosts: voting
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait until SSH works (a new server needs a minute or two)
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 900
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    - name: Wait for first-boot cloud-init to finish
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+      failed_when: false
+
+    - name: Install Docker, the compose plugin and tools
+      ansible.builtin.apt:
+        name: [docker.io, docker-compose-v2, curl, ca-certificates]
+        update_cache: true
+        lock_timeout: 300
+
+    - name: Start Docker
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+# 2. Docker Compose first (so Docker's networks exist before k3s starts) ---------
+- name: Deploy with Docker Compose
+  hosts: voting
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the compose tasks
+      ansible.builtin.include_tasks: tasks/deploy_compose.yml
+      when: deploy_method in ['compose', 'both']
+
+# 3. k3s with the manifests in k8s-specifications/ ------------------------------
+- name: Deploy with k3s
+  hosts: voting
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the k3s tasks
+      ansible.builtin.include_tasks: tasks/deploy_k3s.yml
+      when: deploy_method in ['k3s', 'both']
+
+# 4. Summary ------------------------------------------------------------------
+- name: Summary
+  hosts: voting
+  gather_facts: false
+  tasks:
+    - name: Docker Compose URLs
+      ansible.builtin.debug:
+        msg:
+          - "Vote:   http://{{ public_ip }}:{{ vote_port }}"
+          - "Result: http://{{ public_ip }}:{{ result_port }}"
+      when: deploy_method in ['compose', 'both']
+
+    - name: k3s URLs
+      ansible.builtin.debug:
+        msg:
+          - "Vote (k3s):   http://{{ public_ip }}:{{ k3s_vote_nodeport }}"
+          - "Result (k3s): http://{{ public_ip }}:{{ k3s_result_nodeport }}"
+      when: deploy_method in ['k3s', 'both']

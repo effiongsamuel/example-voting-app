@@ -44,7 +44,7 @@
       ansible.builtin.include_tasks: tasks/deploy_compose.yml
       when: deploy_method in ['compose', 'both']
 
-# 3. k3s with the manifests in k8s-specifications/ ------------------------------
+# 3. k3s, with the app installed by the Helm chart in helm/voting-app/ ---------------
 - name: Deploy with k3s
   hosts: voting
   become: true
