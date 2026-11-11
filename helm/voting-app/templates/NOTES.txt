@@ -1,0 +1,11 @@
+Voting app release "{{ .Release.Name }}" is installed (revision {{ .Release.Revision }}).
+
+  vote   -> NodePort {{ .Values.vote.service.nodePort }}
+  result -> NodePort {{ .Values.result.service.nodePort }}
+  image  -> {{ .Values.image.registry }}/…:{{ .Values.image.tag }}
+
+History and rollback:
+  helm history {{ .Release.Name }}
+  helm rollback {{ .Release.Name }}        # previous revision
+  helm rollback {{ .Release.Name }} <rev>  # a specific revision
+  helm test {{ .Release.Name }}

@@ -1,0 +1,124 @@
+{{- range $name := list "vote" "result" }}
+{{- $cfg := index $.Values $name }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    app: {{ $name }}
+    {{- include "voting.labels" $ | nindent 4 }}
+spec:
+  {{- if not $.Values.autoscaling.enabled }}
+  replicas: {{ $cfg.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ $cfg.runAsUser }}
+        runAsGroup: {{ $cfg.runAsUser }}
+        seccompProfile:
+          type: RuntimeDefault
+        {{- if $.Values.allowLowPorts }}
+        sysctls:
+          - name: net.ipv4.ip_unprivileged_port_start
+            value: "0"
+        {{- end }}
+      {{- with $cfg.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ $name }}
+          image: {{ include "voting.image" (list $ $cfg.image) | quote }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $cfg.containerPort }}
+          {{- if eq $name "result" }}
+          env:
+            {{- include "voting.dbEnv" $ | nindent 12 }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            {{- toYaml $cfg.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ $.Values.readOnlyRootFilesystem }}
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    app: {{ $name }}
+    {{- include "voting.labels" $ | nindent 4 }}
+spec:
+  type: {{ $cfg.service.type }}
+  selector:
+    app: {{ $name }}
+  ports:
+    - name: {{ $name }}-service
+      port: {{ $cfg.service.port }}
+      targetPort: http
+      {{- if eq $cfg.service.type "NodePort" }}
+      nodePort: {{ $cfg.service.nodePort }}
+      {{- end }}
+{{- if $.Values.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}
+  labels:
+    app: {{ $name }}
+    {{- include "voting.labels" $ | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $name }}
+  minReplicas: {{ $.Values.autoscaling.minReplicas }}
+  maxReplicas: {{ $.Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $.Values.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- end }}

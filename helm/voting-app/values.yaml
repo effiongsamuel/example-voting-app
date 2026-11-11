@@ -1,0 +1,76 @@
+# Central values file for the voting-app chart. Nothing secret lives here:
+# the database password is read from the existing Kubernetes Secret named in db.existingSecret.
+
+image:
+  # REQUIRED. Registry path holding the three images, in lowercase, e.g. ghcr.io/<github-owner>
+  registry: ""
+  # CI sets this to the git commit SHA. Use a tag that does not exist to rehearse a bad release.
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Mount every container's root filesystem read-only (small writable emptyDirs are added where needed).
+# Set to false if an app fails to start because it needs to write somewhere unexpected.
+readOnlyRootFilesystem: true
+
+# Lets non-root containers listen on port 80 (pod sysctl net.ipv4.ip_unprivileged_port_start=0).
+allowLowPorts: true
+
+vote:
+  image: example-voting-app-vote
+  replicas: 1
+  runAsUser: 10001
+  containerPort: 80
+  service: { type: NodePort, port: 8080, nodePort: 31000 }
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  nodeSelector: {}
+
+result:
+  image: example-voting-app-result
+  replicas: 1
+  runAsUser: 1000
+  containerPort: 80
+  service: { type: NodePort, port: 8081, nodePort: 31001 }
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  nodeSelector: {}
+
+worker:
+  image: example-voting-app-worker
+  replicas: 1
+  runAsUser: 10001
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { cpu: 500m, memory: 384Mi }
+  nodeSelector: {}
+
+redis:
+  image: redis:7.2.5-alpine
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+  nodeSelector: {}
+
+db:
+  image: postgres:15.7-alpine
+  user: postgres
+  # Name of a Secret you create outside Git (Ansible does it): key POSTGRES_PASSWORD
+  existingSecret: voting-db
+  secretKey: POSTGRES_PASSWORD
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""   # empty = the cluster default (local-path on k3s)
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  nodeSelector: {}
+
+# CPU based autoscaling for the two web apps (k3s ships metrics-server).
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
