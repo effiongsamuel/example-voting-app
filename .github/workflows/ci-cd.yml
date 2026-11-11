@@ -57,7 +57,7 @@ jobs:
           curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar xz kubeconform
           ./kubeconform -strict -summary -kubernetes-version 1.30.0 /tmp/rendered.yaml
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
