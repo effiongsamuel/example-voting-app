@@ -202,6 +202,60 @@ Remove the resources with:
 kubectl delete -f k8s-specifications/
 ```
 
+## Run the app with Helm
+
+This repository includes a Helm chart at [`helm/voting-app/`](helm/voting-app)
+for deploying the application on a Kubernetes cluster. The chart creates the
+vote, result, worker, Redis, and PostgreSQL workloads and exposes the apps
+through NodePorts by default.
+
+### Prerequisites
+
+- A Kubernetes cluster with `kubectl` configured to the target cluster.
+- Helm 3 installed locally.
+- A database password secret for PostgreSQL before installing the chart:
+
+```shell
+kubectl create secret generic voting-db \
+  --from-literal=POSTGRES_PASSWORD='change-me'
+```
+
+### Install
+
+From the repository root, install or upgrade the release:
+
+```shell
+helm upgrade --install voting-app ./helm/voting-app \
+  --set image.registry=ghcr.io/<your-org-or-user> \
+  --set image.tag=latest \
+  --set db.existingSecret=voting-db
+```
+
+Set `image.registry` to the container registry that contains the built images.
+The chart assumes the following images exist:
+
+- `example-voting-app-vote`
+- `example-voting-app-result`
+- `example-voting-app-worker`
+
+### Verify
+
+```shell
+kubectl get pods
+kubectl get svc
+```
+
+The vote app is exposed on port `31000` and the results app on port `31001` by
+default through the chart's NodePort services.
+
+### Roll back or uninstall
+
+```shell
+helm history voting-app
+helm rollback voting-app 1
+helm uninstall voting-app
+```
+
 ## Notes
 
 The voting application accepts one vote per client browser. Additional votes
