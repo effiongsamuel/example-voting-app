@@ -13,7 +13,7 @@ ssh_allowed_cidrs = ["0.0.0.0/0"] # GitHub Actions runners have changing IPs, so
 aws_region = "eu-north-1"
 
 # GitHub user or organisation that owns the images built by .github/workflows/ci-cd.yml (ghcr.io/<owner>/...)
-github_owner = "CHANGE_ME"
+github_owner = "effiongsamuel"
 image_tag    = "latest" # first deployment only; CI deploys the commit SHA afterwards
 
 # false = dedicated VPC (as before). true = the account's default VPC and a default subnet (capstone mode).
