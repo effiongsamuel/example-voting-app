@@ -1,0 +1,243 @@
+name: CI-CD
+
+# Every push and pull request: test, build and scan. A push to main also pushes the images
+# (tagged with the commit SHA) and deploys them to the k3s server with Helm.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  TERRAFORM_VERSION: "1.11.4"
+  HELM_VERSION: "v3.16.4"
+  KUBECONFORM_VERSION: "v0.6.7"
+
+jobs:
+  test:
+    name: Unit tests and static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: vote unit tests
+        run: |
+          pip install -r vote/requirements.txt -r vote/requirements-dev.txt
+          cd vote && python -m pytest -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: result install and syntax check
+        run: |
+          cd result
+          npm ci
+          node --check server.js
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Helm lint and schema validation
+        run: |
+          helm lint helm/voting-app --strict --set image.registry=ghcr.io/example
+          helm template voting helm/voting-app --set image.registry=ghcr.io/example --set image.tag=ci > /tmp/rendered.yaml
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar xz kubeconform
+          ./kubeconform -strict -summary -kubernetes-version 1.30.0 /tmp/rendered.yaml
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform format and validate
+        working-directory: terraform
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Trivy secret and misconfiguration scan
+        uses: aquasecurity/trivy-action@0.28.0
+        env:
+          TRIVY_HELM_SET: image.registry=ghcr.io/example
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret,misconfig
+          severity: HIGH,CRITICAL
+          skip-dirs: result/node_modules,result/views
+          exit-code: "1"
+
+  e2e:
+    name: End-to-end test with docker compose
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the whole stack
+        run: |
+          echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" > .env
+          docker compose up -d --build --wait --wait-timeout 300
+
+      - name: Cast a vote and check it is counted
+        env:
+          VOTE_URL: http://localhost:8082
+          RESULT_URL: http://localhost:8081
+          DB_COUNT_CMD: docker compose exec -T db psql -U postgres -tAc 'select count(*) from votes'
+        run: scripts/smoke-test.sh
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 100
+
+      - name: Clean up
+        if: always()
+        run: docker compose down -v
+
+  build-scan-push:
+    name: Build, scan and push (${{ matrix.service }})
+    needs: [test, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        service: [vote, result, worker]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Registry path must be lowercase
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the image (not pushed yet)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.service }}
+          load: true
+          tags: local/${{ matrix.service }}:ci
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Trivy vulnerability scan (fails on fixable HIGH or CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: local/${{ matrix.service }}:ci
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push, tagged with the commit SHA (and latest on main)
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.service }}
+          push: true
+          tags: |
+            ghcr.io/${{ env.OWNER }}/example-voting-app-${{ matrix.service }}:${{ github.sha }}
+            ${{ github.ref == 'refs/heads/main' && format('ghcr.io/{0}/example-voting-app-{1}:latest', env.OWNER, matrix.service) || '' }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+
+  deploy:
+    name: Deploy with Helm
+    needs: build-scan-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      SERVER_NAME: ${{ vars.SERVER_NAME || 'voting-app-dev-voting-server' }}
+      NODEPORT: ${{ vars.VOTE_NODEPORT || '31000' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-north-1' }}
+
+      - name: Find the server
+        id: find
+        run: |
+          ip=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=${SERVER_NAME}" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          if [ -z "$ip" ] || [ "$ip" = "None" ]; then
+            echo "::warning::No running server named ${SERVER_NAME}. Images were pushed; run the Terraform workflow to create the server."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "ip=$ip" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare SSH
+        if: steps.find.outputs.found == 'true'
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        run: |
+          [ -n "$SSH_KEY" ] || { echo "::error::secret EC2_SSH_PRIVATE_KEY is empty"; exit 1; }
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy.pem
+          chmod 400 ~/.ssh/deploy.pem
+
+      - name: Upgrade the Helm release (rolls back by itself if it does not become healthy)
+        if: steps.find.outputs.found == 'true'
+        env:
+          IP: ${{ steps.find.outputs.ip }}
+          SHA: ${{ github.sha }}
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          ssh_opts=(-i "$HOME/.ssh/deploy.pem" -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30)
+          tar -C helm -cz voting-app | ssh "${ssh_opts[@]}" "ubuntu@${IP}" \
+            'rm -rf /tmp/voting-chart && mkdir /tmp/voting-chart && tar -xz -C /tmp/voting-chart'
+          # the values are expanded here on purpose: owner and SHA are known on the runner
+          # shellcheck disable=SC2029
+          ssh "${ssh_opts[@]}" "ubuntu@${IP}" \
+            "sudo env KUBECONFIG=/etc/rancher/k3s/k3s.yaml helm upgrade --install voting /tmp/voting-chart/voting-app \
+              --reset-then-reuse-values \
+              --set image.registry=ghcr.io/${owner} --set image.tag=${SHA} \
+              --atomic --wait --timeout 8m --history-max 10"
+
+      - name: Check the new version answers
+        if: steps.find.outputs.found == 'true'
+        run: curl -fsS --retry 12 --retry-delay 5 --retry-connrefused -o /dev/null "http://${{ steps.find.outputs.ip }}:${NODEPORT}/"
+
+      - name: Show the release state on failure
+        if: failure() && steps.find.outputs.found == 'true'
+        run: |
+          ssh -i "$HOME/.ssh/deploy.pem" -o StrictHostKeyChecking=accept-new "ubuntu@${{ steps.find.outputs.ip }}" \
+            'sudo env KUBECONFIG=/etc/rancher/k3s/k3s.yaml sh -c "helm history voting; kubectl get pods"' || true
+
+      - name: Remove the SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy.pem

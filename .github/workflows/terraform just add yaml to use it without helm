@@ -1,0 +1,118 @@
+name: Deploy Infrastructure with terraform
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+      - "ansible/**"
+      - "k8s-specifications/**"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time: two applies on the same state would collide.
+concurrency:
+  group: terraform-voting-app
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-north-1
+  TF_VERSION: "1.11.4"
+  TF_STATE_KEY: voting-app/dev.tfstate
+
+# Layout this workflow expects:
+#   terraform/   main.tf variables.tf outputs.tf ansible.tf backend.tf terraform.tfvars
+#   ansible/     playbook.yml ansible.cfg tasks/ templates/
+#   k8s-specifications/
+# Every `run:` step starts inside terraform/.
+defaults:
+  run:
+    working-directory: terraform
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check the repo layout
+        run: |
+          for p in main.tf ansible.tf backend.tf terraform.tfvars \
+                   ../ansible/playbook.yml ../ansible/ansible.cfg \
+                   ../ansible/tasks/deploy_compose.yml ../ansible/tasks/deploy_k3s.yml \
+                   ../ansible/templates/docker-compose.yml.j2 \
+                   ../k8s-specifications/vote-deployment.yaml; do
+            [ -e "$p" ] || { echo "::error::missing $p (paths are relative to terraform/)"; exit 1; }
+          done
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # ansible.tf runs ansible-playbook during apply
+      - name: Install Ansible
+        run: pipx install ansible-core
+
+      # Add once in GitHub: Settings > Secrets and variables > Actions > New repository secret
+      #   name: EC2_SSH_PRIVATE_KEY    value: full contents of devop-aws-ssh.pem
+      - name: Write SSH key
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        run: |
+          [ -n "$SSH_KEY" ] || { echo "::error::secret EC2_SSH_PRIVATE_KEY is empty"; exit 1; }
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/devop-aws-ssh.pem
+          chmod 400 ~/.ssh/devop-aws-ssh.pem
+
+      # State lives in S3. The bucket comes from backend.tf itself or from the
+      # repo variable TF_STATE_BUCKET.
+      - name: Terraform Init
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          if [ -f backend.tf ]; then
+            if [ -z "$TF_STATE_BUCKET" ] && ! grep -q 'bucket' backend.tf; then
+              echo "::error::backend.tf has no bucket and the repo variable TF_STATE_BUCKET is empty"
+              exit 1
+            fi
+            ARGS=(-backend-config="key=$TF_STATE_KEY" -backend-config="region=$AWS_REGION" -backend-config="use_lockfile=true")
+            [ -n "$TF_STATE_BUCKET" ] && ARGS+=(-backend-config="bucket=$TF_STATE_BUCKET")
+            terraform init -input=false "${ARGS[@]}"
+          else
+            echo "::error::no backend.tf - state would not be saved between runs"
+            exit 1
+          fi
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Show the app URLs
+        run: |
+          {
+            echo '### Voting app'
+            echo '```'
+            terraform output -no-color
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
