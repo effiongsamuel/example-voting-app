@@ -96,7 +96,7 @@ jobs:
       # Report only. It never blocks the push, even if the scanner cannot download its database.
       # To make findings block the pipeline, add the repository variable TRIVY_BLOCK = true.
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         continue-on-error: ${{ vars.TRIVY_BLOCK != 'true' }}
         with:
           image-ref: local/${{ matrix.service }}:ci
