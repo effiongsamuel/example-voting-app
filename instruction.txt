@@ -1,0 +1,83 @@
+EXAMPLE VOTING APP - TIER 1 DEVOPS PROJECT
+Steps that only you can do (credentials, GitHub settings, cloud, live demos)
+============================================================================
+
+PART 1 - ONE-TIME SETUP ON GITHUB
+---------------------------------
+1.1  Push this project to your GitHub repository (branch main).
+1.2  Workflows. This ZIP is built on YOUR upload that contains .github, so your working files are kept:
+       terraform.yml          kept; only the k8s-specifications/ trigger and layout check now point at helm/voting-app
+       terraform-destroy.yaml kept exactly as it was
+       ci-cd.yml              NEW: test, scan, build, push, deploy
+       dependabot.yml         your monthly GitHub Actions entry kept, other ecosystems added
+
+1.3  Settings > Secrets and variables > Actions > Secrets > New repository secret:
+       AWS_ACCESS_KEY_ID          access key of an IAM user that may manage EC2, VPC and the state bucket
+       AWS_SECRET_ACCESS_KEY      its secret key
+       EC2_SSH_PRIVATE_KEY        the whole text of devop-aws-ssh.pem
+     (Variables tab, all optional)  TF_STATE_BUCKET, SERVER_NAME (default voting-app-dev-voting-server),
+                                    VOTE_NODEPORT (default 31000), AWS_REGION (default eu-north-1)
+1.4  Edit terraform/terraform.tfvars:
+       github_owner = "<your GitHub user or organisation>"      (it is CHANGE_ME now, Terraform refuses to run)
+     Optional, capstone wording "in the default VPC":  use_default_vpc = true
+1.5  Settings > Actions > General: allow actions and reusable workflows; workflow permissions can stay "Read".
+
+PART 2 - ONE-TIME SETUP ON AWS (eu-north-1)
+-------------------------------------------
+2.1  Remote state bucket (name must match terraform/backend.tf, or change backend.tf):
+       aws s3api create-bucket --bucket ts-academy-voting-single-server-file --region eu-north-1 \
+         --create-bucket-configuration LocationConstraint=eu-north-1
+       aws s3api put-bucket-versioning --bucket ts-academy-voting-single-server-file \
+         --versioning-configuration Status=Enabled
+       aws s3api put-bucket-encryption --bucket ts-academy-voting-single-server-file \
+         --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+       aws s3api put-public-access-block --bucket ts-academy-voting-single-server-file \
+         --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+     Locking uses an S3 lock file (use_lockfile = true, needs Terraform 1.10 or newer; the workflows use 1.11.4).
+     The state holds the generated database password, which is why the bucket must be private and encrypted.
+2.2  The EC2 key pair devop-aws-ssh must exist in eu-north-1 (create_key_pair = false in the tfvars).
+2.3  Free-tier accounts only accept free-tier instance types; the default is m7i-flex.large.
+
+PART 3 - FIRST DEPLOYMENT, IN THIS ORDER
+----------------------------------------
+3.1  Push to main. ci-cd.yml runs: tests, Trivy scan, docker compose end-to-end test, image build and scan,
+     push to ghcr.io/<owner>/example-voting-app-{vote,result,worker} tagged with the commit SHA and "latest".
+     The deploy job prints a warning "No running server" because the server does not exist yet. That is normal.
+3.2  GitHub profile > Packages: open each of the three packages > Package settings > Change visibility > Public.
+     The cluster pulls without a login, so private packages give ImagePullBackOff.
+3.3  Actions > "Deploy Infrastructure with terraform" > Run workflow. It builds the network and the server, installs
+     k3s and Helm, creates the database Secret and installs the Helm release "voting".
+3.4  Open the URLs in the job summary (vote on NodePort 31000, result on 31001, plus the Compose ports when
+     deploy_method is compose or both).
+
+PART 4 - THE LIVE DEMONSTRATIONS
+--------------------------------
+4.1  "One push builds, scans and deploys"
+       Change a visible text, for example in vote/templates/index.html, commit and push to main.
+       Show the Actions run: test > e2e > build-scan-push (3 images) > deploy. Reload the vote page.
+       On the server:  sudo env KUBECONFIG=/etc/rancher/k3s/k3s.yaml helm history voting
+4.2  "Rollback is shown live"
+       scp -i ~/.ssh/devop-aws-ssh.pem scripts/rollback-demo.sh ubuntu@<server-ip>:
+       ssh -i ~/.ssh/devop-aws-ssh.pem ubuntu@<server-ip>
+       sudo REGISTRY=ghcr.io/<owner-in-lowercase> ./rollback-demo.sh
+     It ships image tag "does-not-exist", shows ImagePullBackOff and the failed revision, runs helm rollback and
+     verifies the pods, the images and the vote page. Manual version of the same:
+       helm upgrade voting /opt/voting-app/helm/voting-app --reset-then-reuse-values --set image.tag=bad --wait --timeout 90s
+       helm history voting ; kubectl get pods
+       helm rollback voting            # previous revision
+     The pipeline itself uses --atomic, so a bad commit rolls back automatically and the deploy job turns red.
+4.3  "The environment can be destroyed and rebuilt from code"
+       Actions > "Destroy Infrastructure with terraform" > Run workflow > type: destroy
+       (check in the AWS console that the instance, Elastic IP, VPC and security group are gone)
+       Actions > "Deploy Infrastructure with terraform" > Run workflow  (time it; the IP changes, votes are lost)
+4.4  Autoscaling (optional extra)
+       sudo env KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get hpa -w
+       from your laptop:  ab -n 30000 -c 100 http://<server-ip>:31000/     (apache2-utils)
+       watch REPLICAS of vote go from 1 up to 3, then back down.
+
+PART 5 - RUN IT LOCALLY (step 1 of the project)
+-----------------------------------------------
+       cp .env.example .env            # then change the password inside
+       docker compose up --build       # vote http://localhost:8082  result http://localhost:8081
+       scripts/smoke-test.sh           # needs VOTE_URL, RESULT_URL (see the header of the script)
+       cd vote && pip install -r requirements.txt -r requirements-dev.txt && python -m pytest -q
