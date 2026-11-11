@@ -34,6 +34,33 @@
         enabled: true
         state: started
 
+# 1b. Stop early, with a clear message, if the images cannot be pulled ------------
+- name: Check that the application images can be pulled
+  hosts: voting
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Try to pull each image
+      ansible.builtin.command: "docker pull {{ item }}"
+      loop:
+        - "{{ vote_image }}"
+        - "{{ result_image }}"
+        - "{{ worker_image }}"
+      register: image_pull
+      failed_when: false
+      changed_when: false
+
+    - name: Stop with an explanation if an image cannot be pulled
+      ansible.builtin.fail:
+        msg: >-
+          Cannot pull: {{ image_pull.results | selectattr('rc', 'ne', 0) | map(attribute='item') | list }}.
+          "denied" means the image does not exist yet or the package is private. Fix: (1) push a change in
+          vote/, result/ or worker/ to main and wait until the CI-CD workflow is green, (2) on GitHub open
+          Your profile > Packages, and set each example-voting-app-* package to Public, (3) check that
+          github_owner in terraform/terraform.tfvars is your GitHub name (the name must match the package
+          path above), then run this workflow again.
+      when: (image_pull.results | selectattr('rc', 'ne', 0) | list | length) > 0
+
 # 2. Docker Compose first (so Docker's networks exist before k3s starts) ---------
 - name: Deploy with Docker Compose
   hosts: voting
