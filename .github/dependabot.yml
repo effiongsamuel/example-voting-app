@@ -5,3 +5,13 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+  # Pinned base images, packages and providers # just added to maintain the dependencies for the docker images, python packages, npm packages, nuget packages and terraform providers or stop above last line
+  - { package-ecosystem: docker, directory: "/vote", schedule: { interval: weekly } }
+  - { package-ecosystem: docker, directory: "/result", schedule: { interval: weekly } }
+  - { package-ecosystem: docker, directory: "/worker", schedule: { interval: weekly } }
+  - { package-ecosystem: docker, directory: "/seed-data", schedule: { interval: weekly } }
+  - { package-ecosystem: pip, directory: "/vote", schedule: { interval: weekly } }
+  - { package-ecosystem: npm, directory: "/result", schedule: { interval: weekly } }
+  - { package-ecosystem: nuget, directory: "/worker", schedule: { interval: weekly } }
+  - { package-ecosystem: terraform, directory: "/terraform", schedule: { interval: weekly } }
+
