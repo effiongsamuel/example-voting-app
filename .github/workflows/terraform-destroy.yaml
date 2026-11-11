@@ -39,7 +39,7 @@ jobs:
           [ "$CONFIRM" = "destroy" ] || { echo "::error::type exactly: destroy"; exit 1; }
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
