@@ -17,8 +17,21 @@ io.on('connection', function (socket) {
   });
 });
 
+// var pool = new Pool({
+//   connectionString: 'postgres://postgres:postgres@db/postgres'
+// });
+
+// The password comes from the environment (a Kubernetes Secret or a .env file), never from the source code.
+if (!process.env.POSTGRES_PASSWORD) {
+  console.error('POSTGRES_PASSWORD is not set');
+  process.exit(1);
+}
+
 var pool = new Pool({
-  connectionString: 'postgres://postgres:postgres@db/postgres'
+  host: process.env.POSTGRES_HOST || 'db',
+  user: process.env.POSTGRES_USER || 'postgres',
+  password: process.env.POSTGRES_PASSWORD,
+  database: process.env.POSTGRES_DB || 'postgres'
 });
 
 async.retry(
