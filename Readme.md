@@ -1,4 +1,29 @@
-# Example Voting App
+# Example Voting App: Tier 1 DevOps project
+
+This fork extends the sample voting app into a tested, scanned, and automated
+deployment on a single AWS server:
+
+```text
+browser -> vote (Python) -> Redis -> worker (.NET) -> PostgreSQL <- result (Node.js) <- browser
+```
+
+| Step | What this repository provides |
+|---|---|
+| 1. Run locally | Start the development stack with `docker compose up --build`; vote at <http://localhost:8082> and view results at <http://localhost:8081>. Run [`scripts/smoke-test.sh`](scripts/smoke-test.sh) to submit a vote and check the app endpoints; it can also verify the vote reached PostgreSQL. |
+| 2. Test and scan | [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml) runs vote unit tests and Helm chart lint/render checks. It builds the app images and scans them with Trivy; scans report findings but do not block by default. |
+| 3. Build and deploy | Terraform provisions a single EC2 server and Elastic IP; Ansible installs the selected deployment mode (Compose, k3s with Helm, or both). The Terraform workflow uses remote S3 state with lock-file locking. Set `use_default_vpc = true` in Terraform variables to use the account's default VPC. |
+| 4. CI/CD | On pushes to `main`, the workflow publishes the vote, result, and worker images to GHCR with the commit SHA and `latest` tags, then deploys the Helm release. The infrastructure and destroy workflows are [`.github/workflows/terraform.yml`](.github/workflows/terraform.yml) and [`.github/workflows/terraform-destroy.yaml`](.github/workflows/terraform-destroy.yaml). |
+| 5. Operate | [`helm/voting-app/`](helm/voting-app) includes CPU autoscaling, Prometheus, and Grafana. Grafana is exposed on NodePort `31002`; the vote and result services use `31000` and `31001`. Inspect and roll back releases with `helm history voting` and `helm rollback voting`; [`scripts/rollback-demo.sh`](scripts/rollback-demo.sh) rehearses a failed release. |
+
+AWS credentials and the SSH private key are supplied through GitHub Actions
+secrets. Terraform generates the database password and Ansible provisions it
+as a Kubernetes Secret or a protected Compose-server `.env` file. Keep the S3
+state bucket private and encrypted; Terraform state contains sensitive values.
+
+The manual setup steps and GitHub/AWS configuration are documented in
+[`instruction.txt`](instruction.txt).
+
+## Application overview
 
 A small distributed voting application composed of Python, Node.js, .NET,
 Redis, and PostgreSQL. The application demonstrates a vote frontend, an

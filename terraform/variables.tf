@@ -75,6 +75,12 @@ variable "deploy_method" {
   }
 }
 
+variable "grafana_nodeport" {
+  description = "k3s: NodePort of Grafana (monitoring in the Helm chart). Passed to the chart as monitoring.grafana.service.nodePort."
+  type        = number
+  default     = 31002
+}
+
 variable "vote_port" {
   description = "Docker Compose: host port of the vote page."
   type        = number

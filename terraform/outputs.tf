@@ -18,6 +18,11 @@ output "k3s_result_url" {
   value       = local.use_k3s ? "http://${aws_eip.voting.public_ip}:${var.k3s_result_nodeport}" : null
 }
 
+output "grafana_url" {
+  description = "k3s: Grafana dashboards (user admin; password: see instruction.txt, PART 9). null when deploy_method = compose."
+  value       = local.use_k3s ? "http://${aws_eip.voting.public_ip}:${var.grafana_nodeport}" : null
+}
+
 output "public_ip" {
   description = "Elastic IP of the server."
   value       = aws_eip.voting.public_ip

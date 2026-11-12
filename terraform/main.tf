@@ -49,6 +49,7 @@ locals {
       "compose-result" = var.result_port
       "k3s-vote"       = var.k3s_vote_nodeport
       "k3s-result"     = var.k3s_result_nodeport
+      "k3s-grafana"    = var.grafana_nodeport
     } : name => port if startswith(name, "compose") ? local.use_compose : local.use_k3s
   }
 

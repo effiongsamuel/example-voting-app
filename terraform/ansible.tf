@@ -49,6 +49,7 @@ locals {
     result_port: ${var.result_port}
     k3s_vote_nodeport: ${var.k3s_vote_nodeport}
     k3s_result_nodeport: ${var.k3s_result_nodeport}
+    grafana_nodeport: ${var.grafana_nodeport}
     vote_image: "${local.vote_image}"
     result_image: "${local.result_image}"
     worker_image: "${local.worker_image}"
