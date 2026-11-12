@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 # One run at a time: two applies on the same state would collide.
 concurrency:
@@ -103,6 +104,47 @@ jobs:
 
       - name: Terraform Plan
         run: terraform plan -input=false -out=tfplan
+      - name: Publish Docker images before infrastructure deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Starting Docker image publication..."
+
+          started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          gh workflow run publish-images.yml --ref main
+
+          echo "Waiting for Publish images workflow..."
+
+          run_id=""
+
+          for i in {1..30}; do
+            run_id=$(gh run list \
+              --workflow publish-images.yml \
+              --branch main \
+              --event workflow_dispatch \
+              --limit 5 \
+              --json databaseId,createdAt \
+              --jq "[.[] | select(.createdAt >= \"$started_at\")] | first | .databaseId // empty")
+
+            [ -n "$run_id" ] && break
+            sleep 2
+          done
+
+          if [ -z "$run_id" ]; then
+            echo "::error::Could not find the image publishing workflow run."
+            exit 1
+          fi
+
+          echo "Watching image publishing run: $run_id"
+
+          gh run watch "$run_id" --exit-status
+
+          echo "All Docker images published successfully."
+          echo "Terraform can now provision the infrastructure."
+
+      - name: Terraform Apply
+        run: terraform apply -input=false -auto-approve tfplan
 
       - name: Terraform Apply
         run: terraform apply -input=false -auto-approve tfplan
@@ -115,3 +157,14 @@ jobs:
             terraform output -no-color
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      
+      - name: Trigger CI-CD after successful infrastructure deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Terraform completed successfully."
+          echo "Triggering CI-CD workflow..."
+
+          gh workflow run ci-cd.yml --ref main
+
+          echo "CI-CD workflow has been triggered."
