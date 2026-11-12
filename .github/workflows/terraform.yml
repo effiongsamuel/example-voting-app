@@ -146,8 +146,8 @@ jobs:
       - name: Terraform Apply
         run: terraform apply -input=false -auto-approve tfplan
 
-      - name: Terraform Apply
-        run: terraform apply -input=false -auto-approve tfplan
+      # - name: Terraform Apply
+      #   run: terraform apply -input=false -auto-approve tfplan
 
       - name: Show the app URLs
         run: |

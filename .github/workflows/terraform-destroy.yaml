@@ -73,3 +73,34 @@ jobs:
 
       - name: Terraform destroy
         run: terraform destroy -input=false -auto-approve
+      
+      # Delete GitHub Container Registry packages
+      - name: Delete GitHub Container Registry packages
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_DELETE_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        working-directory: .
+        run: |
+          set -euo pipefail
+
+          OWNER_TYPE=$(gh api "/users/$OWNER" --jq '.type')
+
+          for PACKAGE in vote result worker; do
+            echo "Deleting GHCR package: $PACKAGE"
+
+            if [ "$OWNER_TYPE" = "Organization" ]; then
+              ENDPOINT="/orgs/$OWNER/packages/container/$PACKAGE"
+            else
+              ENDPOINT="/user/packages/container/$PACKAGE"
+            fi
+
+            if gh api --method DELETE "$ENDPOINT"; then
+              echo "Successfully deleted $PACKAGE"
+            else
+              echo "::error::Failed to delete package: $PACKAGE"
+              exit 1
+            fi
+          done
+
+          echo "All GHCR packages deleted successfully."
+
