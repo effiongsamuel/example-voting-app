@@ -127,3 +127,9 @@ button.b{
   width:50%;
   height:100%;
 }
+
+#deployed div{
+  width: 50%;
+  height: 100%;
+  color: #00cb;
+}
