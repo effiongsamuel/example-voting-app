@@ -1,0 +1,82 @@
+{{- if .Values.monitoring.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  labels:
+    app: prometheus
+    {{- include "voting.labels" . | nindent 4 }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:9090"]
+
+      - job_name: grafana
+        static_configs:
+          - targets: ["grafana:{{ .Values.monitoring.grafana.service.port }}"]
+
+      # votes waiting in the queue, memory, clients
+      - job_name: redis
+        static_configs:
+          - targets: ["redis:9121"]
+
+      # votes stored, connections, transactions
+      - job_name: postgres
+        static_configs:
+          - targets: ["db:9187"]
+
+      # CPU, memory and network of every container, read straight from the kubelet (cAdvisor).
+      # The kubelet certificate is self-signed, hence insecure_skip_verify; the token authorises the request.
+      - job_name: containers
+        scheme: https
+        metrics_path: /metrics/cadvisor
+        tls_config:
+          insecure_skip_verify: true
+        authorization:
+          credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning
+  labels:
+    app: grafana
+    {{- include "voting.labels" . | nindent 4 }}
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: voting
+        folder: Voting app
+        type: file
+        disableDeletion: true
+        options:
+          path: /etc/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  labels:
+    app: grafana
+    {{- include "voting.labels" . | nindent 4 }}
+data:
+  voting-app.json: |
+    {{- .Files.Get "files/voting-dashboard.json" | nindent 4 }}
+{{- end }}

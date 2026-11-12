@@ -89,6 +89,36 @@ spec:
               mountPath: /var/run/postgresql
             - name: tmp
               mountPath: /tmp
+{{- if .Values.monitoring.enabled }}
+        - name: postgres-exporter
+          image: {{ .Values.monitoring.postgresExporter.image | quote }}
+          env:
+            - name: DATA_SOURCE_URI
+              value: "localhost:5432/postgres?sslmode=disable"
+            - name: DATA_SOURCE_USER
+              value: {{ .Values.db.user | quote }}
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.db.existingSecret }}
+                  key: {{ .Values.db.secretKey }}
+          ports:
+            - name: metrics
+              containerPort: 9187
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.monitoring.postgresExporter.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ .Values.readOnlyRootFilesystem }}
+            capabilities:
+              drop: ["ALL"]
+{{- end }}
       volumes:
         - name: run
           emptyDir: {}
@@ -117,3 +147,8 @@ spec:
     - name: db-service
       port: 5432
       targetPort: postgres
+{{- if .Values.monitoring.enabled }}
+    - name: metrics
+      port: 9187
+      targetPort: metrics
+{{- end }}

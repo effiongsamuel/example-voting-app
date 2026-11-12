@@ -9,3 +9,10 @@ History and rollback:
   helm rollback {{ .Release.Name }}        # previous revision
   helm rollback {{ .Release.Name }} <rev>  # a specific revision
   helm test {{ .Release.Name }}
+{{- if .Values.monitoring.enabled }}
+
+Monitoring:
+  Grafana  -> NodePort {{ .Values.monitoring.grafana.service.nodePort }}   user: admin
+  password -> kubectl get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d
+  Prometheus stays inside the cluster: kubectl port-forward svc/prometheus 9090:9090
+{{- end }}

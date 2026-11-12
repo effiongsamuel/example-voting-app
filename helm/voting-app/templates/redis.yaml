@@ -53,6 +53,32 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+{{- if .Values.monitoring.enabled }}
+        - name: redis-exporter
+          image: {{ .Values.monitoring.redisExporter.image | quote }}
+          env:
+            - name: REDIS_ADDR
+              value: redis://localhost:6379
+            # exposes redis_key_size{key="votes"}: the votes waiting for the worker
+            - name: REDIS_EXPORTER_CHECK_KEYS
+              value: votes
+          ports:
+            - name: metrics
+              containerPort: 9121
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.monitoring.redisExporter.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ .Values.readOnlyRootFilesystem }}
+            capabilities:
+              drop: ["ALL"]
+{{- end }}
       volumes:
         - name: data
           emptyDir: {}
@@ -72,3 +98,8 @@ spec:
     - name: redis-service
       port: 6379
       targetPort: redis
+{{- if .Values.monitoring.enabled }}
+    - name: metrics
+      port: 9121
+      targetPort: metrics
+{{- end }}

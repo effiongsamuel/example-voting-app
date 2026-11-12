@@ -74,3 +74,32 @@ autoscaling:
   minReplicas: 1
   maxReplicas: 3
   targetCPUUtilizationPercentage: 70
+
+# Monitoring: Prometheus collects the metrics, Grafana shows the dashboard.
+# Grafana is on a NodePort; Prometheus stays inside the cluster. The Grafana admin password is generated
+# on the first install and kept in the Secret grafana-admin (it is never in Git).
+monitoring:
+  enabled: true
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    retention: 3d
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+  grafana:
+    image: grafana/grafana:11.3.0
+    service: { type: NodePort, port: 3000, nodePort: 31002 }
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 384Mi }
+  redisExporter:
+    image: oliver006/redis_exporter:v1.66.0
+    resources:
+      requests: { cpu: 10m, memory: 16Mi }
+      limits: { cpu: 100m, memory: 64Mi }
+  postgresExporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    resources:
+      requests: { cpu: 10m, memory: 24Mi }
+      limits: { cpu: 100m, memory: 96Mi }
+
