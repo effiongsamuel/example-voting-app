@@ -132,7 +132,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      actions: write   # lets this job start the infrastructure workflow when there is no server yet
+      #actions: write   # lets this job start the infrastructure workflow when there is no server yet
     concurrency:
       group: deploy-production
       cancel-in-progress: false
