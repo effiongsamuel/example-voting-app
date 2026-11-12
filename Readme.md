@@ -55,6 +55,15 @@ The development Compose file builds the services locally. Open:
 - Vote: <http://localhost:8082>
 - Results: <http://localhost:8081>
 
+To cast a vote and verify that it reaches PostgreSQL, run the smoke test from
+the repository root:
+
+```shell
+VOTE_URL=http://localhost:8082 RESULT_URL=http://localhost:8081 \
+DB_COUNT_CMD="docker compose exec -T db psql -U postgres -tAc 'select count(*) from votes'" \
+scripts/smoke-test.sh
+```
+
 To run the pre-built Docker images instead:
 
 ```shell
@@ -69,7 +78,8 @@ To stop either deployment, run `docker compose down`.
 This repository includes a one-tier AWS deployment intended for a lab,
 demonstration, or small non-production environment. Terraform creates one
 Ubuntu EC2 instance in one public subnet and assigns it an Elastic IP.
-Ansible then installs Docker and deploys the application with Docker Compose.
+Ansible installs Docker and deploys the selected mode: Docker Compose,
+single-node k3s with Helm, or both.
 
 ![Single-server AWS deployment](image/vote%20and%20result%20app%20single%20server.drawio.png)
 
@@ -88,36 +98,41 @@ VPC -> public subnet -> EC2 instance
                           └── PostgreSQL + persistent Docker volume
 ```
 
-The default deployment is Docker Compose:
+The Compose service URLs are:
 
 - Vote page: `http://<elastic-ip>:8080`
 - Results page: `http://<elastic-ip>:8081`
 
+For k3s, the vote and result services use NodePorts `31000` and `31001`.
+Grafana is available on NodePort `31002`.
+
 The security group exposes only the configured application ports and SSH.
 Redis (`6379`) and PostgreSQL (`5432`) remain internal to the server. The
-same Terraform configuration can optionally install single-node k3s and apply
-the manifests in [`k8s-specifications/`](k8s-specifications), using ports
-`31000` and `31001`.
+same Terraform configuration can deploy Docker Compose, single-node k3s with
+the Helm chart in [`helm/voting-app/`](helm/voting-app), or both. Set
+`use_default_vpc = true` in the Terraform variables to use the account's
+default VPC instead of creating a dedicated VPC.
 
 ### Prerequisites
 
 Install and configure:
 
 - An AWS account and credentials available to the AWS provider.
-- Terraform `>= 1.5.0`.
+- Terraform `>= 1.10.0` (required for S3 lock-file state locking).
 - An existing EC2 key pair, or a public key if
   `create_key_pair = true`.
 - Ansible Core on the machine running Terraform:
   `pipx install ansible-core`.
 
 The configured AWS region defaults to `eu-north-1`. The AMI filter currently
-targets Canonical Ubuntu 26.04 x86_64 images; change
+targets Canonical Ubuntu 24.04 x86_64 images; change
 `ami_name_filter` in [`terraform/terraform.tfvars`](terraform/terraform.tfvars)
 if the selected region does not provide that image.
 
 The Terraform backend uses an existing S3 bucket configured in
 [`terraform/backend.tf`](terraform/backend.tf). Create that bucket first, or
-change the backend configuration to a bucket you control. Do not commit AWS
+change the backend configuration to a bucket you control. Enable bucket
+versioning and encryption, block public access, and do not commit AWS
 credentials, private keys, or Terraform state.
 
 ### Deploy
@@ -142,8 +157,9 @@ credentials, private keys, or Terraform state.
    ```
 
    `run_ansible = true` causes Terraform to generate the Ansible inventory and
-   variables, wait for SSH, install Docker, start the Compose stack, and wait
-   for both web applications to respond.
+   variables, wait for SSH, and deploy the selected Compose and/or k3s mode.
+   The k3s setup installs Helm, provisions the database Secret, installs the
+   chart, and checks that the web applications respond.
 
 4. Print the URLs and connection details:
 
@@ -154,9 +170,9 @@ credentials, private keys, or Terraform state.
    Useful outputs include `vote_url`, `result_url`, `public_ip`, and
    `ssh_command`.
 
-To deploy k3s instead of Compose, set `deploy_method = "k3s"` and apply again.
-Use `"both"` to deploy both modes, but choose non-overlapping ports if both
-applications are exposed at the same time.
+Set `deploy_method` to `"compose"`, `"k3s"`, or `"both"` to choose the
+deployment mode. The repository's current Terraform variables select `"both"`;
+if you expose both deployments, they use different ports.
 
 ### Re-running Ansible
 
@@ -189,9 +205,10 @@ This is deliberately a **single-tier** deployment, not a highly available
 production architecture. It has one EC2 instance, one Availability Zone, a
 publicly reachable host, and PostgreSQL data stored on the instance's EBS
 volume. It does not provide an Application Load Balancer, managed RDS,
-multi-AZ failover, autoscaling, backups, TLS termination, or zero-downtime
-deployments. Add those services and controls before using the design for
-production workloads.
+multi-AZ failover, node autoscaling, backups, TLS termination, or
+zero-downtime deployments. The Helm chart can autoscale the vote and result
+pods, but that does not scale the single EC2 host. Add the missing services
+and controls before using the design for production workloads.
 
 ## Run the app in Docker Swarm
 
@@ -233,7 +250,8 @@ This repository includes a Helm chart at [`helm/voting-app/`](helm/voting-app)
 for deploying the application on a Kubernetes cluster. The chart creates the
 vote, result, worker, Redis, and PostgreSQL workloads and exposes the apps
 through NodePorts by default. The vote app uses port `31000` and the results
-app uses port `31001`.
+app uses port `31001`. Prometheus collects metrics inside the cluster, and
+Grafana is exposed on NodePort `31002`.
 
 ### Prerequisites
 
@@ -250,11 +268,11 @@ kubectl create secret generic voting-db \
 
 ### Install
 
-From the repository root, install or upgrade the `voting-app` release. Replace
+From the repository root, install or upgrade the `voting` release. Replace
 `YOUR_GITHUB_USERNAME` with the registry owner that contains the images:
 
 ```shell
-helm upgrade --install voting-app ./helm/voting-app \
+helm upgrade --install voting ./helm/voting-app \
   --set image.registry=ghcr.io/YOUR_GITHUB_USERNAME \
   --set image.tag=latest \
   --set db.existingSecret=voting-db
@@ -296,9 +314,9 @@ Replace `SERVER_IP` with the EC2 server's public IP address.
 ### Roll back or uninstall
 
 ```shell
-sudo -E helm history voting-app
-sudo -E helm rollback voting-app REVISION
-sudo -E helm uninstall voting-app
+sudo -E helm history voting
+sudo -E helm rollback voting REVISION
+sudo -E helm uninstall voting
 ```
 
 Replace `REVISION` with a revision shown by `helm history`. When using a locally
