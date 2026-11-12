@@ -3,22 +3,22 @@ name: CI-CD
 # Lean pipeline: it only runs when application or chart files change, builds each image once,
 # scans it (report only), and on main pushes the image tagged with the commit SHA and deploys with Helm.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "vote/**"
-      - "result/**"
-      - "worker/**"
-      - "helm/**"
-      - ".github/workflows/ci-cd.yml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "vote/**"
-      - "result/**"
-      - "worker/**"
-      - "helm/**"
-      - ".github/workflows/ci-cd.yml"
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - "vote/**"
+  #     - "result/**"
+  #     - "worker/**"
+  #     - "helm/**"
+  #     - ".github/workflows/ci-cd.yml"
+  # pull_request:
+  #   branches: [main]
+  #   paths:
+  #     - "vote/**"
+  #     - "result/**"
+  #     - "worker/**"
+  #     - "helm/**"
+  #     - ".github/workflows/ci-cd.yml"
   workflow_dispatch:
 
 permissions:
