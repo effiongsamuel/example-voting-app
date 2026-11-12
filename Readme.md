@@ -313,6 +313,9 @@ Replace `SERVER_IP` with the EC2 server's public IP address.
 
 ### Roll back or uninstall
 
+Note the roll happen automatically on push to github
+![Helm roll live demo](image/helm-roll.png)
+
 ```shell
 sudo -E helm history voting
 sudo -E helm rollback voting REVISION
@@ -358,6 +361,8 @@ sudo k3s kubectl get secret grafana-admin \
 
 Replace `SERVER_IP` with the server's IP. Keep the decoded password private.
 In Grafana, open **Dashboards > Voting app > Voting app**.
+
+![Application architecture](image/grafana-dashboard.png)
 
 ### Check Prometheus and the dashboard
 
