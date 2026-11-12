@@ -99,6 +99,7 @@
     {% if helm_status.rc != 0 %}--set image.tag={{ image_tag }}{% endif %}
     --set vote.service.nodePort={{ k3s_vote_nodeport }}
     --set result.service.nodePort={{ k3s_result_nodeport }}
+    --set monitoring.grafana.service.nodePort={{ grafana_nodeport }}
     --atomic --wait --timeout 8m --history-max 10
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
