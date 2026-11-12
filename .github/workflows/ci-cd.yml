@@ -130,6 +130,9 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write   # lets this job start the infrastructure workflow when there is no server yet
     concurrency:
       group: deploy-production
       cancel-in-progress: false
@@ -152,11 +155,31 @@ jobs:
             --filters "Name=tag:Name,Values=${SERVER_NAME}" "Name=instance-state-name,Values=running" \
             --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
           if [ -z "$ip" ] || [ "$ip" = "None" ]; then
-            echo "::warning::No running server named ${SERVER_NAME}. Images were pushed; run the Terraform workflow to create the server."
             echo "found=false" >> "$GITHUB_OUTPUT"
           else
             echo "found=true" >> "$GITHUB_OUTPUT"
             echo "ip=$ip" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The images are already pushed at this point, so the infrastructure workflow can install them.
+      # Set the repository variable AUTO_INFRA to false to switch this off (for example after a destroy).
+      - name: No server yet, so build the infrastructure automatically
+        if: steps.find.outputs.found == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTO_INFRA: ${{ vars.AUTO_INFRA || 'true' }}
+        run: |
+          if [ "$AUTO_INFRA" = "false" ]; then
+            echo "::warning::No running server named ${SERVER_NAME} and AUTO_INFRA is false. Run the infrastructure workflow yourself."
+            exit 0
+          fi
+          busy=$(( $(gh run list --workflow terraform.yml --status in_progress --json databaseId --jq length) \
+                 + $(gh run list --workflow terraform.yml --status queued --json databaseId --jq length) ))
+          if [ "$busy" -gt 0 ]; then
+            echo "The infrastructure workflow is already running."
+          else
+            gh workflow run terraform.yml --ref main
+            echo "Started the infrastructure workflow. It installs the app from the images pushed above."
           fi
 
       - name: Prepare SSH

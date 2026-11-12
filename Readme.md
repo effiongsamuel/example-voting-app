@@ -207,36 +207,42 @@ kubectl delete -f k8s-specifications/
 This repository includes a Helm chart at [`helm/voting-app/`](helm/voting-app)
 for deploying the application on a Kubernetes cluster. The chart creates the
 vote, result, worker, Redis, and PostgreSQL workloads and exposes the apps
-through NodePorts by default.
+through NodePorts by default. The vote app uses port `31000` and the results
+app uses port `31001`.
 
 ### Prerequisites
 
 - A Kubernetes cluster with `kubectl` configured to the target cluster.
 - Helm 3 installed locally.
-- A database password secret for PostgreSQL before installing the chart:
+- The three application images pushed to a container registry.
+- A database password Secret in the namespace where you will install the chart.
+  Store the password in a protected file, then create the Secret:
 
 ```shell
 kubectl create secret generic voting-db \
-  --from-literal=POSTGRES_PASSWORD='change-me'
+  --from-file=POSTGRES_PASSWORD=/secure/path/to/password-file
 ```
 
 ### Install
 
-From the repository root, install or upgrade the release:
+From the repository root, install or upgrade the `voting-app` release. Replace
+`YOUR_GITHUB_USERNAME` with the registry owner that contains the images:
 
 ```shell
 helm upgrade --install voting-app ./helm/voting-app \
-  --set image.registry=ghcr.io/<your-org-or-user> \
+  --set image.registry=ghcr.io/YOUR_GITHUB_USERNAME \
   --set image.tag=latest \
   --set db.existingSecret=voting-db
 ```
 
-Set `image.registry` to the container registry that contains the built images.
-The chart assumes the following images exist:
+The chart expects these image names under the registry path:
 
 - `example-voting-app-vote`
 - `example-voting-app-result`
 - `example-voting-app-worker`
+
+For example, the vote image would be
+`ghcr.io/YOUR_GITHUB_USERNAME/example-voting-app-vote:latest`.
 
 ### Verify
 
@@ -245,16 +251,34 @@ kubectl get pods
 kubectl get svc
 ```
 
-The vote app is exposed on port `31000` and the results app on port `31001` by
-default through the chart's NodePort services.
+Open `http://<server-ip>:31000` for voting and
+`http://<server-ip>:31001` for results, substituting the IP address of a
+Kubernetes node that is reachable from your machine.
+
+To manage the k3s cluster directly on the EC2 server, connect with SSH and
+configure the k3s kubeconfig before running the `sudo -E helm` commands below.
+The install command above can instead be run from your machine if its
+`kubectl` context targets this cluster.
+
+```shell
+ssh -i ~/.ssh/devop-aws-ssh.pem ubuntu@SERVER_IP
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+sudo -E helm list -A
+```
+
+Replace `SERVER_IP` with the EC2 server's public IP address.
 
 ### Roll back or uninstall
 
 ```shell
-helm history voting-app
-helm rollback voting-app 1
-helm uninstall voting-app
+sudo -E helm history voting-app
+sudo -E helm rollback voting-app REVISION
+sudo -E helm uninstall voting-app
 ```
+
+Replace `REVISION` with a revision shown by `helm history`. When using a locally
+configured Kubernetes context instead of SSHing to the k3s server, run these
+Helm commands without `sudo -E`.
 
 ## Notes
 
