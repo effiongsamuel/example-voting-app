@@ -323,6 +323,77 @@ Replace `REVISION` with a revision shown by `helm history`. When using a locally
 configured Kubernetes context instead of SSHing to the k3s server, run these
 Helm commands without `sudo -E`.
 
+## Monitoring with Prometheus and Grafana (k3s / Helm only)
+
+The Helm chart installs Prometheus and Grafana by default
+(`monitoring.enabled: true` in `helm/voting-app/values.yaml`). Monitoring is
+available only with the k3s/Helm deployment; Docker Compose does not include
+Prometheus or Grafana.
+
+Prometheus scrapes five jobs:
+
+| Job | Metrics |
+|---|---|
+| `redis` | Votes waiting in the queue, clients, memory, and commands |
+| `postgres` | Stored votes, connections, and transactions |
+| `containers` | Container CPU, memory, and network metrics from kubelet/cAdvisor |
+| `grafana` | Grafana health |
+| `prometheus` | Prometheus health |
+
+The vote, result, and worker applications do not currently expose application
+metrics, so request counts and latencies are not available.
+
+### Open Grafana and get the password
+
+Open `http://<server-ip>:31002` (or use the `grafana_url` Terraform output).
+Sign in with username `admin`. The Helm chart generates the password on its
+first install and stores it in the Kubernetes Secret `grafana-admin`; upgrades
+reuse that password. It is not stored in Git. Retrieve it from the k3s server:
+
+```shell
+ssh -i ~/.ssh/devop-aws-ssh.pem ubuntu@SERVER_IP
+sudo k3s kubectl get secret grafana-admin \
+  -o jsonpath='{.data.admin-password}' | base64 --decode; echo
+```
+
+Replace `SERVER_IP` with the server's IP. Keep the decoded password private.
+In Grafana, open **Dashboards > Voting app > Voting app**.
+
+### Check Prometheus and the dashboard
+
+Prometheus is internal to the cluster and is not exposed publicly. To inspect
+its scrape targets, open an SSH tunnel from your local machine:
+
+```shell
+ssh -i ~/.ssh/devop-aws-ssh.pem -L 9090:localhost:9090 ubuntu@SERVER_IP
+```
+
+In that SSH session, start a port-forward:
+
+```shell
+sudo k3s kubectl port-forward svc/prometheus 9090:9090
+
+# OPEN THE SECURITY GROUP AND ADD 9090
+```
+
+Then open <http://localhost:9090/targets> locally and check that all five jobs
+are `UP`. Cast votes at `http://<server-ip>:31000` and watch the Grafana
+dashboard for vote and resource metrics; it refreshes every 10 seconds.
+
+### Monitoring notes and troubleshooting
+
+- Prometheus retains three days of metrics in pod-local storage. Metrics are
+  lost if the Prometheus pod is replaced or restarted.
+- There is no alerting or identity-provider integration.
+- If the `containers` target is down, inspect Prometheus logs with
+  `sudo k3s kubectl logs deploy/prometheus`; authorization errors can indicate
+  Kubernetes permissions, while certificate errors relate to kubelet TLS.
+- If a panel shows no data, inspect its query in Grafana **Explore**. The
+  stored-vote row count depends on the PostgreSQL exporter metric; the
+  "Votes written to Postgres per second" panel is a more reliable indicator.
+- To disable monitoring for an install or upgrade, use
+  `--set monitoring.enabled=false` with `helm upgrade`.
+
 ## Notes
 
 The voting application accepts one vote per client browser. Additional votes
