@@ -104,6 +104,8 @@ jobs:
 
       - name: Terraform Plan
         run: terraform plan -input=false -out=tfplan
+        
+        # push image before deploying infrastructure, so that the voting app can be deployed immediately after the infrastructure is ready
       - name: Publish Docker images before infrastructure deployment
         env:
           GH_TOKEN: ${{ github.token }}
@@ -143,11 +145,11 @@ jobs:
           echo "All Docker images published successfully."
           echo "Terraform can now provision the infrastructure."
 
-      - name: Terraform Apply
-        run: terraform apply -input=false -auto-approve tfplan
-
       # - name: Terraform Apply
       #   run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -input=false -auto-approve tfplan
 
       - name: Show the app URLs
         run: |
