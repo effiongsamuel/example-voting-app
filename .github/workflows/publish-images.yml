@@ -39,6 +39,8 @@ jobs:
         with:
           context: ./${{ matrix.service }}
           push: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           tags: |
             ghcr.io/${{ env.OWNER }}/example-voting-app-${{ matrix.service }}:${{ github.sha }}
             ghcr.io/${{ env.OWNER }}/example-voting-app-${{ matrix.service }}:latest

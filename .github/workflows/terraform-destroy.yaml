@@ -8,7 +8,8 @@ on:
         required: true
 
 permissions:
-  contents: read
+  contents: read 
+  packages: write
 
 concurrency:
   group: terraform-voting-app
@@ -75,32 +76,36 @@ jobs:
         run: terraform destroy -input=false -auto-approve
       
       # Delete GitHub Container Registry packages
+      
       - name: Delete GitHub Container Registry packages
-        env:
-          GH_TOKEN: ${{ secrets.GHCR_DELETE_TOKEN }}
-          OWNER: ${{ github.repository_owner }}
         working-directory: .
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
           OWNER_TYPE=$(gh api "/users/$OWNER" --jq '.type')
 
-          for PACKAGE in vote result worker; do
+          for SERVICE in vote result worker; do
+            PACKAGE="example-voting-app-$SERVICE"
             echo "Deleting GHCR package: $PACKAGE"
 
             if [ "$OWNER_TYPE" = "Organization" ]; then
               ENDPOINT="/orgs/$OWNER/packages/container/$PACKAGE"
             else
-              ENDPOINT="/user/packages/container/$PACKAGE"
+              ENDPOINT="/users/$OWNER/packages/container/$PACKAGE"
             fi
 
-            if gh api --method DELETE "$ENDPOINT"; then
-              echo "Successfully deleted $PACKAGE"
+            if OUT=$(gh api --method DELETE "$ENDPOINT" 2>&1); then
+              echo "Deleted $PACKAGE"
+            elif echo "$OUT" | grep -q "HTTP 404"; then
+              echo "$PACKAGE not found (already deleted), skipping"
             else
-              echo "::error::Failed to delete package: $PACKAGE"
+              echo "::error::Failed to delete $PACKAGE: $OUT"
               exit 1
             fi
           done
 
-          echo "All GHCR packages deleted successfully."
-
+          echo "All voting application packages deleted."
